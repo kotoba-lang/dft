@@ -1,0 +1,96 @@
+(ns dft.jtag
+  "JTAG / Boundary Scan — IEEE 1149.1 TAP controller modeling and BSDL
+  generation. Restored from kami-dft's `jtag` module (kami-engine/kami-dft/
+  src/jtag.rs, deleted PR #82). A `JtagInstruction` is either a keyword
+  (`:bypass`/`:extest`/`:sample-preload`/`:idcode`/`:boundary-scan`) or a
+  `[:user-defined n]` vector (the original's `UserDefined(u8)` variant).")
+
+(def cell-types #{:bc1 :bc2 :bc4 :bc7})
+
+(defn instruction-name
+  "The BSDL instruction name for `instr`."
+  [instr]
+  (if (vector? instr)
+    (str "USER_" (second instr))
+    (case instr
+      :bypass "BYPASS"
+      :extest "EXTEST"
+      :sample-preload "SAMPLE"
+      :idcode "IDCODE"
+      :boundary-scan "BOUNDARY_SCAN")))
+
+(defn- to-binary-str [n width]
+  #?(:clj (let [s (Long/toBinaryString (long n))]
+            (str (apply str (repeat (max 0 (- width (count s))) \0)) s))
+     :cljs (let [s (.toString n 2)]
+             (str (apply str (repeat (max 0 (- width (count s))) "0")) s))))
+
+(defn instruction-opcode
+  "The instruction opcode for `instr` at `ir-len` bits, as a zero-padded
+  binary string (simplified sequential assignment: EXTEST=0, SAMPLE=1,
+  IDCODE=2, BOUNDARY_SCAN=3, USER_n=n+4, BYPASS=all-1s)."
+  [instr ir-len]
+  (let [code (if (vector? instr)
+               (+ (second instr) 4)
+               (case instr
+                 :bypass (dec (bit-shift-left 1 ir-len))
+                 :extest 0
+                 :sample-preload 1
+                 :idcode 2
+                 :boundary-scan 3))]
+    (to-binary-str code ir-len)))
+
+(defn cell-type-bsdl-name [cell-type]
+  (case cell-type
+    :bc1 "BC_1" :bc2 "BC_2" :bc4 "BC_4" :bc7 "BC_7"))
+
+(defn bsdl-device
+  [{:keys [name instruction-length instructions boundary-register idcode]}]
+  {:name name :instruction-length instruction-length :instructions instructions
+   :boundary-register boundary-register :idcode idcode})
+
+(defn generate-bsdl
+  "Generate a BSDL (Boundary Scan Description Language) file for `device`."
+  [{:keys [name instruction-length instructions boundary-register idcode] :as device}]
+  (let [n-boundary (count boundary-register)
+        n-instr (count instructions)]
+    (str "-- BSDL file for " name "\n"
+         "entity " name " is\n\n"
+         "  generic (PHYSICAL_PIN_MAP : string := \"DEFAULT\");\n\n"
+         "  port (\n"
+         "    TDI   : in  bit;\n"
+         "    TDO   : out bit;\n"
+         "    TMS   : in  bit;\n"
+         "    TCK   : in  bit;\n"
+         (apply str
+                (map-indexed
+                 (fn [i cell]
+                   (str "    " (:pin-name cell) "  : inout bit"
+                        (if (< (inc i) n-boundary) ";" "") "\n"))
+                 boundary-register))
+         "  );\n\n"
+         "  use STD_1149_1_2001.all;\n\n"
+         "  attribute INSTRUCTION_LENGTH of " name " : entity is " instruction-length ";\n"
+         "  attribute INSTRUCTION_OPCODE of " name " : entity is\n"
+         (apply str
+                (map-indexed
+                 (fn [i instr]
+                   (str "    \"" (instruction-name instr) " ("
+                        (instruction-opcode instr instruction-length) ")\""
+                        (if (< (inc i) n-instr) " &" "") "\n"))
+                 instructions))
+         "  ;\n\n"
+         "  attribute IDCODE_REGISTER of " name " : entity is\n"
+         "    \"" (to-binary-str idcode 32) "\";\n\n"
+         "  attribute BOUNDARY_LENGTH of " name " : entity is " n-boundary ";\n"
+         "  attribute BOUNDARY_REGISTER of " name " : entity is\n"
+         (apply str
+                (map-indexed
+                 (fn [i cell]
+                   (let [ctrl (if-some [c (:control-cell cell)] (str c) "X")]
+                     (str "    \"" i "  (" (cell-type-bsdl-name (:cell-type cell)) ", "
+                          (:pin-name cell) ", input, X, " ctrl ", 0, Z)\""
+                          (if (< (inc i) n-boundary) "," "") "\n")))
+                 boundary-register))
+         "  ;\n\n"
+         "end " name ";\n")))
