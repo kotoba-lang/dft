@@ -17,17 +17,27 @@ insertion, BIST generation, ATPG pattern generation, and JTAG/BSDL support.
 
 Depends on `kotoba-lang/engineer` for shared contracts (constraint/DRC/etc).
 
+Magic constants (march-element counts, BSDL instruction names/opcodes,
+ATPG activating values/detection rates) are EDN-authority under
+`resources/dft/*_defaults.edn`, loaded into each namespace's `defaults`
+var; every public fn that consults `defaults` still works with its
+original arity (the table is always the last, optional argument).
+
 ## Status
 
 Restored — all 4 modules ported from the original 695-line Rust source
 (`lib.rs` + `scan.rs` + `bist.rs` + `atpg.rs` + `jtag.rs`), with all 12
 original Rust unit tests mirrored 1:1 in `test/dft_test.cljc` (+1 smoke
-test). Pure data + pure functions throughout; `dft.atpg`'s xorshift64 PRNG
-uses unsigned 64-bit shift/mod (JVM `Long/remainderUnsigned` — a CLJS arm
-can be added if a browser consumer needs ATPG).
+test, +4 additional edge-case tests: empty scan inputs, unknown march
+algorithm, PRNG determinism, `[:user-defined n]` JTAG instructions —
+17 tests / 40 assertions total). Pure data + pure functions throughout;
+`dft.atpg`'s xorshift64 PRNG uses unsigned 64-bit shift/mod (JVM
+`Long/remainderUnsigned` — a CLJS arm can be added if a browser consumer
+needs ATPG).
 
 ## Develop
 
 ```bash
 clojure -M:test
+clojure -M:lint
 ```

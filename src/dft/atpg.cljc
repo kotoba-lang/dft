@@ -7,14 +7,34 @@
   pattern fill; ported here with unsigned right-shift (`unsigned-bit-shift-
   right`) so the 64-bit bit pattern matches the Rust `>>` on `u64` (logical,
   not arithmetic). No test depends on exact PRNG output values — only on
-  aggregate detection behavior, which is deterministic per fault type.")
+  aggregate detection behavior, which is deterministic per fault type.
+
+  Activating values, detection rates, the PRNG seed and the random-fill
+  bit-width cap live in `defaults` (EDN-authority, mirrors
+  `resources/dft/atpg_defaults.edn`); `generate-patterns` still defaults
+  to `defaults` so the existing 2-arity call sites are unaffected — the
+  3-arity overload only matters if a caller wants to override the table."
+  (:require [clojure.edn :as edn]
+            #?(:clj [clojure.java.io :as io])))
+
+(def defaults
+  "ATPG default constants — activating values, detection rates, PRNG
+  seed and random-fill width. Mirrors `resources/dft/atpg_defaults.edn`
+  (loaded on the JVM) and the Rust `atpg.rs` constants."
+  #?(:clj (edn/read-string (slurp (io/resource "dft/atpg_defaults.edn")))
+     :cljs (edn/read-string
+            "{:atpg/activating-value {:stuck-at-0 1 :stuck-at-1 0}
+              :atpg/detection-rate-pct {:transition-slow 80 :transition-fast 80
+                                         :bridging-and 60 :bridging-or 60}
+              :atpg/max-random-fill-bits 16
+              :atpg/prng-seed -3819410108451629448}")))
 
 (def fault-types
   #{:stuck-at-0 :stuck-at-1 :transition-slow :transition-fast
     :bridging-and :bridging-or})
 
-(defn- xorshift64
-  "Simple xorshift64 PRNG step, matching the original Rust `u64` bit pattern."
+(defn xorshift64
+  "One xorshift64 PRNG step, matching the original Rust `u64` bit pattern."
   [state]
   (let [state (bit-xor state (bit-shift-left state 13))
         state (bit-xor state (unsigned-bit-shift-right state 7))
@@ -36,49 +56,50 @@
   simplified D-algorithm seed (drive the activating value on the faulted
   net) + xorshift64 pseudo-random fill for other inputs, with a
   fault-type-dependent simulated detection rate (stuck-at: always detected;
-  transition: 80%; bridging: 60%). Returns `{:patterns :fault-coverage
-  :detected-faults :total-faults :aborted-faults}` plus the faults with
-  `:detected` updated."
-  [faults gate-count]
-  (let [total-faults (count faults)
-        gate-shift (min gate-count 16)
-        fill-mod (bit-shift-left 1 gate-shift)]
-    (loop [remaining faults
-           rng-state (unchecked-long 0xCAFEBABE12345678N)
-           patterns []
-           updated-faults []
-           detected 0
-           aborted 0]
-      (if (empty? remaining)
-        {:patterns patterns
-         :fault-coverage (if (pos? total-faults) (/ (double detected) total-faults) 0.0)
-         :detected-faults detected
-         :total-faults total-faults
-         :aborted-faults aborted
-         :faults updated-faults}
-        (let [fault (first remaining)
-              fault-type (:fault-type fault)
-              [activating-value rng-state]
-              (case fault-type
-                :stuck-at-0 [1 rng-state]
-                :stuck-at-1 [0 rng-state]
-                (:transition-slow :transition-fast :bridging-and :bridging-or)
-                (let [s (xorshift64 rng-state)] [(bit-and s 1) s]))
-              rng-state (xorshift64 rng-state)
-              random-input (umod rng-state fill-mod)
-              pattern {:inputs [[(:net-name fault) activating-value]
-                                ["random_fill" random-input]]
-                       :expected [["out" activating-value]]}
-              [is-detected rng-state]
-              (case fault-type
-                (:stuck-at-0 :stuck-at-1) [true rng-state]
-                (:transition-slow :transition-fast)
-                (let [s (xorshift64 rng-state)] [(< (umod s 100) 80) s])
-                (:bridging-and :bridging-or)
-                (let [s (xorshift64 rng-state)] [(< (umod s 100) 60) s]))]
-          (recur (rest remaining)
-                 rng-state
-                 (conj patterns pattern)
-                 (conj updated-faults (assoc fault :detected is-detected))
-                 (if is-detected (inc detected) detected)
-                 (if is-detected aborted (inc aborted))))))))
+  transition/bridging: per `(:atpg/detection-rate-pct defaults)`). Returns
+  `{:patterns :fault-coverage :detected-faults :total-faults
+  :aborted-faults}` plus the faults with `:detected` updated."
+  ([faults gate-count] (generate-patterns faults gate-count defaults))
+  ([faults gate-count defaults]
+   (let [total-faults (count faults)
+         gate-shift (min gate-count (:atpg/max-random-fill-bits defaults))
+         fill-mod (bit-shift-left 1 gate-shift)
+         rate-pct (:atpg/detection-rate-pct defaults)]
+     (loop [remaining faults
+            rng-state (:atpg/prng-seed defaults)
+            patterns []
+            updated-faults []
+            detected 0
+            aborted 0]
+       (if (empty? remaining)
+         {:patterns patterns
+          :fault-coverage (if (pos? total-faults) (/ (double detected) total-faults) 0.0)
+          :detected-faults detected
+          :total-faults total-faults
+          :aborted-faults aborted
+          :faults updated-faults}
+         (let [fault (first remaining)
+               fault-type (:fault-type fault)
+               [activating-value rng-state]
+               (case fault-type
+                 :stuck-at-0 [(get-in defaults [:atpg/activating-value :stuck-at-0]) rng-state]
+                 :stuck-at-1 [(get-in defaults [:atpg/activating-value :stuck-at-1]) rng-state]
+                 (:transition-slow :transition-fast :bridging-and :bridging-or)
+                 (let [s (xorshift64 rng-state)] [(bit-and s 1) s]))
+               rng-state (xorshift64 rng-state)
+               random-input (umod rng-state fill-mod)
+               pattern {:inputs [[(:net-name fault) activating-value]
+                                 ["random_fill" random-input]]
+                        :expected [["out" activating-value]]}
+               [is-detected rng-state]
+               (case fault-type
+                 (:stuck-at-0 :stuck-at-1) [true rng-state]
+                 (:transition-slow :transition-fast :bridging-and :bridging-or)
+                 (let [s (xorshift64 rng-state)]
+                   [(< (umod s 100) (get rate-pct fault-type)) s]))]
+           (recur (rest remaining)
+                  rng-state
+                  (conj patterns pattern)
+                  (conj updated-faults (assoc fault :detected is-detected))
+                  (if is-detected (inc detected) detected)
+                  (if is-detected aborted (inc aborted)))))))))

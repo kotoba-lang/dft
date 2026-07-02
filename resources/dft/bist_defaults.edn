@@ -1,0 +1,25 @@
+;; Default BIST (built-in self-test) constants.
+;; Mirrors the Rust `kami-dft::bist` module (retired kami-dft crate,
+;; kotoba-lang/kami-engine, deleted PR #82) and `dft.bist/defaults`
+;; (loaded at runtime; a `:cljs` literal fallback lives alongside it).
+;;
+;; :bist/march-elements — number of march elements (read/write
+;; operations per address) per March algorithm variant, per
+;; `MarchAlgorithm::march_elements` (Rust).
+;;
+;; :bist/mbist-overhead-cycles — fixed init/done FSM overhead added to
+;; MBIST test time, independent of memory size or algorithm.
+;;
+;; :bist/mbist-extra-states — FSM states beyond one-per-march-element
+;; (init + compare + done).
+;;
+;; :bist/lbist-patterns-per-chain — standard LBIST test depth: pseudo-
+;; random patterns applied per scan chain.
+{:bist/march-elements {:march-c 10
+                        :march-c-minus 10
+                        :march-b 17
+                        :march-a 15
+                        :checkerboard 4}
+ :bist/mbist-overhead-cycles 10
+ :bist/mbist-extra-states 3
+ :bist/lbist-patterns-per-chain 1024}

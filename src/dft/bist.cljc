@@ -1,20 +1,39 @@
 (ns dft.bist
   "Built-In Self-Test — memory BIST (MBIST) and logic BIST (LBIST)
   generation. Restored from kami-dft's `bist` module (kami-engine/kami-dft/
-  src/bist.rs, deleted PR #82).")
+  src/bist.rs, deleted PR #82).
+
+  March-element counts and other magic constants live in `defaults`
+  (EDN-authority, mirrors `resources/dft/bist_defaults.edn`) rather than
+  inline in the code; every public fn still defaults to `defaults` so
+  existing 1-arity call sites are unaffected — the 2-arity overload only
+  matters if a caller wants to override the table."
+  (:require [clojure.edn :as edn]
+            #?(:clj [clojure.java.io :as io])))
+
+(def defaults
+  "BIST default constants — march-element counts, MBIST FSM overhead,
+  LBIST test depth. Mirrors `resources/dft/bist_defaults.edn` (loaded on
+  the JVM) and the Rust `bist.rs` constants."
+  #?(:clj (edn/read-string (slurp (io/resource "dft/bist_defaults.edn")))
+     :cljs (edn/read-string
+            "{:bist/march-elements {:march-c 10 :march-c-minus 10 :march-b 17
+                                     :march-a 15 :checkerboard 4}
+              :bist/mbist-overhead-cycles 10
+              :bist/mbist-extra-states 3
+              :bist/lbist-patterns-per-chain 1024}")))
 
 (def bist-types #{:memory-bist :logic-bist})
 (def march-algorithms #{:march-c :march-c-minus :march-b :march-a :checkerboard})
 
 (defn march-elements
-  "Number of read/write operations per address for `algorithm`."
-  [algorithm]
-  (case algorithm
-    :march-c 10
-    :march-c-minus 10
-    :march-b 17
-    :march-a 15
-    :checkerboard 4))
+  "Number of read/write operations per address for `algorithm`. Throws if
+  `algorithm` isn't in `defaults` (a programmer error, not silently
+  ignored)."
+  ([algorithm] (march-elements algorithm defaults))
+  ([algorithm defaults]
+   (or (get (:bist/march-elements defaults) algorithm)
+       (throw (ex-info "unknown march algorithm" {:algorithm algorithm})))))
 
 (defn mbist-config
   [{:keys [memory-name algorithm data-width addr-width]}]
@@ -24,12 +43,14 @@
 (defn create-mbist
   "Create a memory BIST controller: computes state-machine complexity and
   test time from the march algorithm and memory dimensions."
-  [config]
-  (let [num-addresses (bit-shift-left 1 (:addr-width config))
-        march-ops (march-elements (:algorithm config))
-        test-time-cycles (+ (* num-addresses march-ops) 10)
-        state-count (+ (march-elements (:algorithm config)) 3)]
-    {:config config :state-count state-count :test-time-cycles test-time-cycles}))
+  ([config] (create-mbist config defaults))
+  ([config defaults]
+   (let [num-addresses (bit-shift-left 1 (:addr-width config))
+         march-ops (march-elements (:algorithm config) defaults)
+         test-time-cycles (+ (* num-addresses march-ops)
+                              (:bist/mbist-overhead-cycles defaults))
+         state-count (+ march-ops (:bist/mbist-extra-states defaults))]
+     {:config config :state-count state-count :test-time-cycles test-time-cycles})))
 
 (defn lbist-config
   [{:keys [seed polynomial scan-chain-count]}]
@@ -38,5 +59,8 @@
 (defn create-lbist
   "Create a logic BIST controller: 1024 patterns per scan chain (standard
   LBIST depth)."
-  [config]
-  {:config config :test-cycle-count (* 1024 (:scan-chain-count config))})
+  ([config] (create-lbist config defaults))
+  ([config defaults]
+   {:config config
+    :test-cycle-count (* (:bist/lbist-patterns-per-chain defaults)
+                          (:scan-chain-count config))}))

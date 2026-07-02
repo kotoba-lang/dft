@@ -3,21 +3,39 @@
   generation. Restored from kami-dft's `jtag` module (kami-engine/kami-dft/
   src/jtag.rs, deleted PR #82). A `JtagInstruction` is either a keyword
   (`:bypass`/`:extest`/`:sample-preload`/`:idcode`/`:boundary-scan`) or a
-  `[:user-defined n]` vector (the original's `UserDefined(u8)` variant).")
+  `[:user-defined n]` vector (the original's `UserDefined(u8)` variant).
+
+  Instruction names/opcodes and cell-type BSDL names live in `defaults`
+  (EDN-authority, mirrors `resources/dft/jtag_defaults.edn`); every
+  public fn still defaults to `defaults` so existing call sites are
+  unaffected — the extra arity only matters if a caller wants to
+  override the table."
+  (:require [clojure.edn :as edn]
+            #?(:clj [clojure.java.io :as io])))
+
+(def defaults
+  "JTAG default constants — instruction names/opcodes, boundary-scan
+  cell-type BSDL names. Mirrors `resources/dft/jtag_defaults.edn`
+  (loaded on the JVM) and the Rust `jtag.rs` constants."
+  #?(:clj (edn/read-string (slurp (io/resource "dft/jtag_defaults.edn")))
+     :cljs (edn/read-string
+            "{:jtag/instruction-names {:bypass \"BYPASS\" :extest \"EXTEST\"
+                                        :sample-preload \"SAMPLE\" :idcode \"IDCODE\"
+                                        :boundary-scan \"BOUNDARY_SCAN\"}
+              :jtag/instruction-opcodes {:extest 0 :sample-preload 1
+                                          :idcode 2 :boundary-scan 3}
+              :jtag/cell-type-bsdl-names {:bc1 \"BC_1\" :bc2 \"BC_2\"
+                                           :bc4 \"BC_4\" :bc7 \"BC_7\"}}")))
 
 (def cell-types #{:bc1 :bc2 :bc4 :bc7})
 
 (defn instruction-name
   "The BSDL instruction name for `instr`."
-  [instr]
-  (if (vector? instr)
-    (str "USER_" (second instr))
-    (case instr
-      :bypass "BYPASS"
-      :extest "EXTEST"
-      :sample-preload "SAMPLE"
-      :idcode "IDCODE"
-      :boundary-scan "BOUNDARY_SCAN")))
+  ([instr] (instruction-name instr defaults))
+  ([instr defaults]
+   (if (vector? instr)
+     (str "USER_" (second instr))
+     (get (:jtag/instruction-names defaults) instr))))
 
 (defn- to-binary-str [n width]
   #?(:clj (let [s (Long/toBinaryString (long n))]
@@ -25,24 +43,27 @@
      :cljs (let [s (.toString n 2)]
              (str (apply str (repeat (max 0 (- width (count s))) "0")) s))))
 
+(defn instruction-opcode-value
+  "The numeric instruction opcode for `instr` at `ir-len` bits
+  (simplified sequential assignment: EXTEST=0, SAMPLE=1, IDCODE=2,
+  BOUNDARY_SCAN=3, USER_n=n+4, BYPASS=all-1s)."
+  ([instr ir-len] (instruction-opcode-value instr ir-len defaults))
+  ([instr ir-len defaults]
+   (cond
+     (vector? instr) (+ (second instr) 4)
+     (= instr :bypass) (dec (bit-shift-left 1 ir-len))
+     :else (get (:jtag/instruction-opcodes defaults) instr))))
+
 (defn instruction-opcode
   "The instruction opcode for `instr` at `ir-len` bits, as a zero-padded
-  binary string (simplified sequential assignment: EXTEST=0, SAMPLE=1,
-  IDCODE=2, BOUNDARY_SCAN=3, USER_n=n+4, BYPASS=all-1s)."
-  [instr ir-len]
-  (let [code (if (vector? instr)
-               (+ (second instr) 4)
-               (case instr
-                 :bypass (dec (bit-shift-left 1 ir-len))
-                 :extest 0
-                 :sample-preload 1
-                 :idcode 2
-                 :boundary-scan 3))]
-    (to-binary-str code ir-len)))
+  binary string. See `instruction-opcode-value` for the numeric value."
+  ([instr ir-len] (instruction-opcode instr ir-len defaults))
+  ([instr ir-len defaults]
+   (to-binary-str (instruction-opcode-value instr ir-len defaults) ir-len)))
 
-(defn cell-type-bsdl-name [cell-type]
-  (case cell-type
-    :bc1 "BC_1" :bc2 "BC_2" :bc4 "BC_4" :bc7 "BC_7"))
+(defn cell-type-bsdl-name
+  ([cell-type] (cell-type-bsdl-name cell-type defaults))
+  ([cell-type defaults] (get (:jtag/cell-type-bsdl-names defaults) cell-type)))
 
 (defn bsdl-device
   [{:keys [name instruction-length instructions boundary-register idcode]}]
@@ -51,7 +72,7 @@
 
 (defn generate-bsdl
   "Generate a BSDL (Boundary Scan Description Language) file for `device`."
-  [{:keys [name instruction-length instructions boundary-register idcode] :as device}]
+  [{:keys [name instruction-length instructions boundary-register idcode]}]
   (let [n-boundary (count boundary-register)
         n-instr (count instructions)]
     (str "-- BSDL file for " name "\n"
