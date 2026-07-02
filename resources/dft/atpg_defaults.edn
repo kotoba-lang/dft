@@ -1,0 +1,28 @@
+;; Default ATPG (automatic test pattern generation) constants.
+;; Mirrors the Rust `kami-dft::atpg` module (retired kami-dft crate,
+;; kotoba-lang/kami-engine, deleted PR #82) and `dft.atpg/defaults`
+;; (loaded at runtime; a `:cljs` literal fallback lives alongside it).
+;;
+;; :atpg/activating-value — the stimulus value that excites a stuck-at
+;; fault (drive the opposite value: SA0 -> 1, SA1 -> 0). Transition and
+;; bridging faults have no static excitation value — they draw one bit
+;; from the PRNG at generation time.
+;;
+;; :atpg/detection-rate-pct — simulated detection probability (as a
+;; 0-100 integer, matching the original Rust `% 100` comparisons) per
+;; fault type. Stuck-at faults are always "detected" by this simplified
+;; generator (handled specially, not tabulated here).
+;;
+;; :atpg/max-random-fill-bits — cap on the random-fill bit width derived
+;; from `gate-count`.
+;;
+;; :atpg/prng-seed — deterministic xorshift64 seed, the signed 64-bit
+;; two's-complement bit pattern of Rust's `0xCAFE_BABE_1234_5678u64`.
+{:atpg/activating-value {:stuck-at-0 1
+                          :stuck-at-1 0}
+ :atpg/detection-rate-pct {:transition-slow 80
+                            :transition-fast 80
+                            :bridging-and 60
+                            :bridging-or 60}
+ :atpg/max-random-fill-bits 16
+ :atpg/prng-seed -3819410108451629448}

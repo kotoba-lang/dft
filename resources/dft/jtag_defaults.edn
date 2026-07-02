@@ -1,0 +1,29 @@
+;; Default JTAG / boundary-scan constants (IEEE 1149.1).
+;; Mirrors the Rust `kami-dft::jtag` module (retired kami-dft crate,
+;; kotoba-lang/kami-engine, deleted PR #82) and `dft.jtag/defaults`
+;; (loaded at runtime; a `:cljs` literal fallback lives alongside it).
+;;
+;; :jtag/instruction-names — BSDL instruction name per fixed
+;; instruction (per `JtagInstruction::name`, Rust). `[:user-defined n]`
+;; is dynamic ("USER_<n>"), not tabulated here.
+;;
+;; :jtag/instruction-opcodes — fixed opcode assignment (sequential,
+;; per `JtagInstruction::opcode`, Rust). BYPASS is always all-1s
+;; (`2^ir-len - 1`, computed, not tabulated) and `[:user-defined n]`
+;; is `n + 4` (also computed).
+;;
+;; :jtag/cell-type-bsdl-names — BSDL boundary-scan cell type name per
+;; IEEE 1149.1 cell type (per `CellType::bsdl_name`, Rust).
+{:jtag/instruction-names {:bypass "BYPASS"
+                           :extest "EXTEST"
+                           :sample-preload "SAMPLE"
+                           :idcode "IDCODE"
+                           :boundary-scan "BOUNDARY_SCAN"}
+ :jtag/instruction-opcodes {:extest 0
+                             :sample-preload 1
+                             :idcode 2
+                             :boundary-scan 3}
+ :jtag/cell-type-bsdl-names {:bc1 "BC_1"
+                              :bc2 "BC_2"
+                              :bc4 "BC_4"
+                              :bc7 "BC_7"}}

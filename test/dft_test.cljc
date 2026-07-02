@@ -12,7 +12,11 @@
 
 (deftest namespace-loads
   (testing "the restored CLJC namespace loads"
-    (is (some? (the-ns 'dft)))))
+    ;; `the-ns` is JVM-only (no cljs equivalent reachable from user code);
+    ;; the whole form must be behind the reader conditional (not just a
+    ;; spliced :require) or clj-kondo's cljs analysis pass flags `the-ns`
+    ;; as an unresolved symbol.
+    (is (some? #?(:clj (the-ns 'dft) :cljs true)))))
 
 (defn- default-config [chain-count]
   (scan/config {:chain-count chain-count :max-length 100 :clock-name "clk"
@@ -44,6 +48,14 @@
     (is (= "SI0" (:scan-in (first (:cells c0)))))
     (is (= "SO0" (:scan-out (last (:cells c0)))))))
 
+;; additive: edge case not covered by the original Rust tests but exercised
+;; by `insert-scan-chains`' own `(or (zero? chain-count) (empty? flip-flops))`
+;; guard clause.
+(deftest scan-empty-inputs
+  (testing "zero chains or no flip-flops -> no chains"
+    (is (= [] (scan/insert-scan-chains ["ff_0"] (default-config 0))))
+    (is (= [] (scan/insert-scan-chains [] (default-config 3))))))
+
 ;; mirrors `mbist_march_c_cycle_count` (bist.rs)
 (deftest mbist-march-c-cycle-count
   (let [config (bist/mbist-config {:memory-name "sram_4k" :algorithm :march-c
@@ -57,6 +69,15 @@
   (let [config (bist/lbist-config {:seed 0xDEADBEEF :polynomial 0x8005 :scan-chain-count 4})
         ctrl (bist/create-lbist config)]
     (is (= (* 1024 4) (:test-cycle-count ctrl)))))
+
+;; additive: `march-elements` is a programmer-facing lookup (unlike the
+;; Rust `MarchAlgorithm` enum, `algorithm` here isn't statically checked),
+;; so an unknown keyword should fail loudly rather than being silently
+;; treated as zero-cost.
+(deftest march-elements-unknown-algorithm-throws
+  (testing "unknown march algorithm is a programmer error, not silently ignored"
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (bist/march-elements :march-z)))))
 
 ;; mirrors `stuck_at_coverage_is_positive` (atpg.rs)
 (deftest stuck-at-coverage-is-positive
@@ -80,6 +101,17 @@
   (let [result (atpg/generate-patterns [] 4)]
     (is (= 0.0 (:fault-coverage result)))
     (is (= 0 (count (:patterns result))))))
+
+;; additive: exercises `xorshift64` directly (now public so it's testable)
+;; for the determinism property `generate-patterns` relies on — same input
+;; state always advances to the same next state, and the state changes.
+(deftest xorshift64-progresses
+  (testing "xorshift64 changes the state and is deterministic"
+    (let [seed (:atpg/prng-seed atpg/defaults)
+          s1 (atpg/xorshift64 seed)
+          s2 (atpg/xorshift64 seed)]
+      (is (= s1 s2))
+      (is (not= s1 seed)))))
 
 (defn- sample-device []
   (jtag/bsdl-device
@@ -117,3 +149,12 @@
     (is (= "1111" (jtag/instruction-opcode :bypass 4)))
     (is (= "0000" (jtag/instruction-opcode :extest 4)))
     (is (= "0010" (jtag/instruction-opcode :idcode (:instruction-length dev))))))
+
+;; additive: the `[:user-defined n]` instruction variant (Rust's
+;; `JtagInstruction::UserDefined(u8)`) wasn't covered by
+;; `instruction-opcodes` above, which only exercises the fixed instructions.
+(deftest instruction-name-user-defined
+  (testing "[:user-defined n] formats as USER_<n> and opcodes n+4"
+    (is (= "USER_7" (jtag/instruction-name [:user-defined 7])))
+    (is (= 11 (jtag/instruction-opcode-value [:user-defined 7] 4)))
+    (is (= "1011" (jtag/instruction-opcode [:user-defined 7] 4)))))
