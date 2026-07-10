@@ -11,11 +11,30 @@
   (:require [clojure.edn :as edn]
             #?(:clj [clojure.java.io :as io])))
 
+;; resources/dft/bist_defaults.edn was datomic/datascript-ized by
+;; edn-datomize.bb (wrap-map-keep-ns): its top level is now
+;; `[{:db/id -1 :bist/... ...}]` tx-data instead of a plain map. The
+;; already-namespaced keys (:bist/march-elements etc.) are unchanged;
+;; non-scalar values (nested maps) were pr-str'd into blob strings. This
+;; reconstitutes the original raw map so `defaults` keeps the exact shape
+;; every call site below (and the `:cljs` literal fallback) already expects.
+#?(:clj
+   (defn- unblob [v]
+     (if (string? v)
+       (try (let [parsed (edn/read-string v)] (if (coll? parsed) parsed v))
+            (catch Exception _ v))
+       v)))
+
+#?(:clj
+   (defn- reconstitute-defaults [tx-data]
+     (into {} (map (fn [[k v]] [k (unblob v)]))
+           (dissoc (first tx-data) :db/id))))
+
 (def defaults
   "BIST default constants — march-element counts, MBIST FSM overhead,
   LBIST test depth. Mirrors `resources/dft/bist_defaults.edn` (loaded on
   the JVM) and the Rust `bist.rs` constants."
-  #?(:clj (edn/read-string (slurp (io/resource "dft/bist_defaults.edn")))
+  #?(:clj (reconstitute-defaults (edn/read-string (slurp (io/resource "dft/bist_defaults.edn"))))
      :cljs (edn/read-string
             "{:bist/march-elements {:march-c 10 :march-c-minus 10 :march-b 17
                                      :march-a 15 :checkerboard 4}
