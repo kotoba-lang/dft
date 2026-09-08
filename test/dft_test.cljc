@@ -3,7 +3,7 @@
   (kami-engine/kami-dft/src/{scan,bist,atpg,jtag}.rs `mod tests`,
   deleted PR #82)."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [dft]
             [dft.scan :as scan]
             [dft.bist :as bist]
