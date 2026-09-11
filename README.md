@@ -27,7 +27,7 @@ original arity (the table is always the last, optional argument).
 
 Restored — all 4 modules ported from the original 695-line Rust source
 (`lib.rs` + `scan.rs` + `bist.rs` + `atpg.rs` + `jtag.rs`), with all 12
-original Rust unit tests mirrored 1:1 in `test/dft_test.cljc` (+1 smoke
+original Rust unit tests mirrored 1:1 in `test/dft_test.cljk` (+1 smoke
 test, +4 additional edge-case tests: empty scan inputs, unknown march
 algorithm, PRNG determinism, `[:user-defined n]` JTAG instructions —
 17 tests / 40 assertions total). Pure data + pure functions throughout;
